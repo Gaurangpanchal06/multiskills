@@ -1,22 +1,17 @@
 {
+  "functions": {
+    "api/proxy.js": {
+      "runtime": "edge"
+    }
+  },
   "rewrites": [
     {
-      "source": "/api/supabase/:path*",
-      "destination": "/api/supabase/:path*"
+      "source": "/api/proxy/:path*",
+      "destination": "/api/proxy"
     },
     {
       "source": "/(.*)",
       "destination": "/index.html"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/api/supabase/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin",  "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,PUT,PATCH,DELETE,OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization, apikey, x-client-info" }
-      ]
     }
   ]
 }
