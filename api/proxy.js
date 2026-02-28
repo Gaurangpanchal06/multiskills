@@ -1,65 +1,66 @@
 // api/proxy.js
-// Vercel serverless function — proxies all Supabase
-// requests so Jio/BSNL users are never blocked.
+// Vercel serverless function.
+// Called as: /api/proxy?path=/auth/v1/signup
+// Forwards request to Supabase and returns response.
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SUPABASE_URL  = process.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = process.env.VITE_SUPABASE_ANON_KEY;
 
 module.exports = async function handler(req, res) {
-  // CORS preflight
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin',  '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,apikey,x-client-info');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,apikey,x-client-info,x-supabase-api-version,prefer');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
+  if (req.method === 'OPTIONS') return res.status(204).end();
+
+  // Get the supabase path from query param
+  // e.g. /api/proxy?path=/auth/v1/signup&redirect_to=...
+  const { path, ...restQuery } = req.query;
+
+  if (!path) {
+    return res.status(400).json({ error: 'Missing ?path= parameter' });
   }
 
+  // Rebuild query string from remaining params (e.g. redirect_to)
+  const queryString = new URLSearchParams(restQuery).toString();
+  const targetUrl   = `${SUPABASE_URL}${path}${queryString ? '?' + queryString : ''}`;
+
   try {
-    // Strip /api/proxy from the path to get the Supabase path
-    // e.g. /api/proxy/auth/v1/signup → /auth/v1/signup
-    const supabasePath = req.url.replace('/api/proxy', '') || '/';
-    const targetUrl = `${SUPABASE_URL}${supabasePath}`;
-
-    // Build headers to forward
+    // Build headers
     const headers = {
-      'apikey': SUPABASE_ANON,
+      'apikey':        SUPABASE_ANON,
       'Authorization': req.headers['authorization'] || `Bearer ${SUPABASE_ANON}`,
-      'Content-Type': req.headers['content-type'] || 'application/json',
+      'Content-Type':  req.headers['content-type']  || 'application/json',
     };
-
-    // Forward optional Supabase headers
     ['x-client-info', 'x-supabase-api-version', 'prefer'].forEach(h => {
       if (req.headers[h]) headers[h] = req.headers[h];
     });
 
-    // Read request body for POST/PATCH/PUT
+    // Read body
     let body = undefined;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      body = await new Promise((resolve) => {
-        let data = '';
-        req.on('data', chunk => data += chunk);
-        req.on('end', () => resolve(data));
+      body = await new Promise(resolve => {
+        let d = '';
+        req.on('data', c => d += c);
+        req.on('end',  () => resolve(d));
       });
     }
 
     const supabaseRes = await fetch(targetUrl, {
-      method: req.method,
+      method:  req.method,
       headers: headers,
-      body: body || undefined,
+      body:    body || undefined,
     });
 
-    // Forward status and headers back to client
-    res.status(supabaseRes.status);
+    // Forward response headers
     supabaseRes.headers.forEach((value, key) => {
-      // Skip headers that cause issues when forwarding
-      if (!['transfer-encoding', 'connection'].includes(key.toLowerCase())) {
+      if (!['transfer-encoding', 'connection', 'keep-alive'].includes(key.toLowerCase())) {
         res.setHeader(key, value);
       }
     });
 
-    const data = await supabaseRes.text();
-    res.send(data);
+    res.status(supabaseRes.status).send(await supabaseRes.text());
 
   } catch (err) {
     res.status(500).json({ error: 'Proxy error', message: err.message });
