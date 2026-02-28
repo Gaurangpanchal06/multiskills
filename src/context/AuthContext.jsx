@@ -5,11 +5,14 @@ import supabase from '../lib/supabase';
 
 const AuthContext = createContext(null);
 
+const IS_PROD = import.meta.env.PROD;
+
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
 
+  // Restore session on mount
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
@@ -26,51 +29,95 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // ── Sign In ───────────────────────────────
   async function signIn(email, password) {
     setError(null);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-    if (error) { setError(error.message); return false; }
-    return true;
+    try {
+      if (IS_PROD) {
+        // Go through Vercel server — browser never touches Supabase
+        const res  = await fetch('/api/auth', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ action: 'signin', email: email.trim(), password }),
+        });
+        const data = await res.json();
+        if (!res.ok) { setError(data.error); return false; }
+
+        // Manually set the session so Supabase client knows user is logged in
+        await supabase.auth.setSession({
+          access_token:  data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        });
+        return true;
+      } else {
+        // Dev: call Supabase directly
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(), password,
+        });
+        if (error) { setError(error.message); return false; }
+        return true;
+      }
+    } catch (err) {
+      setError('Connection failed. Please check your internet and try again.');
+      return false;
+    }
   }
 
+  // ── Sign Up ───────────────────────────────
   async function signUp(email, password, fullName) {
     setError(null);
-    const { data, error } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-      options: {
-        data: { full_name: fullName?.trim() || '' },
-        emailRedirectTo: window.location.origin,
-      },
-    });
-    if (error) { setError(error.message); return { ok: false }; }
-    if (data?.user?.identities?.length === 0) {
-      setError('An account with this email already exists. Please sign in.');
+    try {
+      if (IS_PROD) {
+        // Go through Vercel server
+        const res  = await fetch('/api/auth', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ action: 'signup', email: email.trim(), password, fullName }),
+        });
+        const data = await res.json();
+        if (!res.ok) { setError(data.error); return { ok: false }; }
+
+        // If session returned (email confirmation off), set it immediately
+        if (data.session) {
+          await supabase.auth.setSession({
+            access_token:  data.session.access_token,
+            refresh_token: data.session.refresh_token,
+          });
+        }
+        return { ok: true, needsConfirmation: data.needsConfirmation };
+      } else {
+        // Dev: call Supabase directly
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { data: { full_name: fullName || '' } },
+        });
+        if (error) { setError(error.message); return { ok: false }; }
+        if (data?.user?.identities?.length === 0) {
+          setError('An account with this email already exists.');
+          return { ok: false };
+        }
+        return { ok: true, needsConfirmation: !data.session };
+      }
+    } catch (err) {
+      setError('Connection failed. Please check your internet and try again.');
       return { ok: false };
     }
-    return { ok: true, needsConfirmation: !data.session };
   }
 
+  // ── Google OAuth ──────────────────────────
+  // Google OAuth is a browser redirect — works fine
+  // on its own since Supabase handles it server-side.
   async function signInWithGoogle() {
     setError(null);
-
-    // In production, the OAuth flow must go entirely through our Vercel proxy
-    // so users on Jio/BSNL never make a direct connection to supabase.co.
-    // We point redirectTo back to our own origin — Supabase will redirect
-    // the browser here after Google authenticates, and detectSessionInUrl
-    // picks up the token automatically.
-    const redirectTo = window.location.origin;
-
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo },
+      options:  { redirectTo: window.location.origin },
     });
     if (error) setError(error.message);
   }
 
+  // ── Sign Out ──────────────────────────────
   async function signOut() {
     await supabase.auth.signOut();
   }
