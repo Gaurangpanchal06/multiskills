@@ -1,15 +1,10 @@
 // src/lib/supabase.js
-// ─────────────────────────────────────────────
-// Supabase v2 client for Vite.
-// In production: routes through Vercel proxy so
-// Jio/BSNL users are never blocked.
-// In development: connects to Supabase directly.
-// ─────────────────────────────────────────────
 
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const APP_URL       = import.meta.env.VITE_APP_URL;
 
 if (!SUPABASE_URL || !SUPABASE_ANON) {
   throw new Error(
@@ -20,19 +15,29 @@ if (!SUPABASE_URL || !SUPABASE_ANON) {
   );
 }
 
-// In production, route through our Vercel proxy instead of hitting
-// Supabase directly — this bypasses ISP-level blocks (Jio, BSNL, etc.)
-// In development (localhost), hit Supabase directly as usual.
-const isProduction  = import.meta.env.PROD;
-const SUPABASE_CLIENT_URL = isProduction
-  ? `${import.meta.env.VITE_APP_URL}/api/supabase`
+// In production: all traffic (auth + database) goes through the Vercel proxy.
+// This means the browser never connects to supabase.co directly —
+// completely bypassing Jio/BSNL ISP blocks.
+// In development: connect to Supabase directly as normal.
+const isProduction = import.meta.env.PROD;
+const clientUrl    = isProduction && APP_URL
+  ? `${APP_URL}/api/supabase`
   : SUPABASE_URL;
 
-const supabase = createClient(SUPABASE_CLIENT_URL, SUPABASE_ANON, {
+const supabase = createClient(clientUrl, SUPABASE_ANON, {
   auth: {
-    persistSession:    true,
-    autoRefreshToken:  true,
+    persistSession:     true,
+    autoRefreshToken:   true,
     detectSessionInUrl: true,
+    // Tell the auth client to use the proxy URL for all auth endpoints
+    ...(isProduction && APP_URL && {
+      flowType: 'pkce', // More secure flow, works better with proxies
+    }),
+  },
+  global: {
+    headers: {
+      'x-app-name': 'multiskills',
+    },
   },
 });
 

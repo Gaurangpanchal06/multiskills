@@ -1,7 +1,4 @@
 // src/context/AuthContext.jsx
-// ─────────────────────────────────────────────
-// Auth state provider for Supabase v2 + Vite.
-// ─────────────────────────────────────────────
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import supabase from '../lib/supabase';
@@ -14,7 +11,6 @@ export function AuthProvider({ children }) {
   const [error,   setError]   = useState(null);
 
   useEffect(() => {
-    // Restore session on mount (also handles Google OAuth redirect callback)
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
@@ -55,29 +51,28 @@ export function AuthProvider({ children }) {
       setError('An account with this email already exists. Please sign in.');
       return { ok: false };
     }
-    const needsConfirmation = !data.session;
-    return { ok: true, needsConfirmation };
+    return { ok: true, needsConfirmation: !data.session };
   }
 
   async function signInWithGoogle() {
     setError(null);
+
+    // In production, the OAuth flow must go entirely through our Vercel proxy
+    // so users on Jio/BSNL never make a direct connection to supabase.co.
+    // We point redirectTo back to our own origin — Supabase will redirect
+    // the browser here after Google authenticates, and detectSessionInUrl
+    // picks up the token automatically.
+    const redirectTo = window.location.origin;
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        // This must exactly match a Redirect URL in:
-        // Supabase Dashboard → Auth → URL Configuration → Redirect URLs
-        // AND an Authorized redirect URI in Google Cloud Console → OAuth 2.0
-        // The redirect goes: Google → Supabase → your app
-        redirectTo: window.location.origin,
-      },
+      options: { redirectTo },
     });
     if (error) setError(error.message);
   }
 
   async function signOut() {
     await supabase.auth.signOut();
-    // user state will be cleared by onAuthStateChange listener above
-    // App.jsx watches isAuthenticated and redirects to /auth automatically
   }
 
   const value = {

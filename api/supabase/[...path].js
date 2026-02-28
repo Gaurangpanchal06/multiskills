@@ -1,49 +1,53 @@
 // api/supabase/[...path].js
 // ─────────────────────────────────────────────
-// Vercel serverless proxy — forwards all requests
-// to Supabase server-side. Users never connect to
-// Supabase directly, bypassing ISP blocks entirely.
+// Vercel edge proxy — forwards ALL Supabase traffic
+// including auth redirects, so Jio/BSNL users are
+// never blocked.
 // ─────────────────────────────────────────────
 
-export const config = {
-  // Use edge runtime for lowest latency worldwide
-  runtime: 'edge',
-};
+export const config = { runtime: 'edge' };
 
 const SUPABASE_URL  = process.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = process.env.VITE_SUPABASE_ANON_KEY;
+const APP_URL       = process.env.VITE_APP_URL;
 
 export default async function handler(req) {
   try {
-    // Build the target Supabase URL
-    // e.g. /api/supabase/auth/v1/signup → https://xxx.supabase.co/auth/v1/signup
     const url = new URL(req.url);
     const supabasePath = url.pathname.replace('/api/supabase', '');
     const targetUrl = `${SUPABASE_URL}${supabasePath}${url.search}`;
 
-    // Forward all original headers, inject anon key
     const headers = new Headers(req.headers);
     headers.set('apikey', SUPABASE_ANON);
-
-    // Ensure Authorization header is forwarded (for authenticated requests)
-    // It will already be in req.headers if present, this is just a safeguard
     if (!headers.get('Authorization')) {
       headers.set('Authorization', `Bearer ${SUPABASE_ANON}`);
     }
-
-    // Remove headers that cause issues when proxying
     headers.delete('host');
 
-    // Forward the request to Supabase
     const supabaseResponse = await fetch(targetUrl, {
       method:  req.method,
       headers: headers,
-      body:    req.method !== 'GET' && req.method !== 'HEAD'
-               ? req.body
-               : undefined,
+      body:    req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+      redirect: 'manual', // Don't auto-follow redirects — we handle them below
     });
 
-    // Return Supabase's response back to the client
+    // ── Rewrite redirect locations ────────────────
+    // When Supabase sends a redirect (e.g. after Google OAuth callback),
+    // it may redirect to its own domain. We rewrite those to go through
+    // our proxy instead, so the browser never touches supabase.co directly.
+    if (supabaseResponse.status >= 300 && supabaseResponse.status < 400) {
+      const location = supabaseResponse.headers.get('location');
+      if (location) {
+        const rewritten = location.replace(SUPABASE_URL, `${APP_URL}/api/supabase`);
+        const newHeaders = new Headers(supabaseResponse.headers);
+        newHeaders.set('location', rewritten);
+        return new Response(null, {
+          status:  supabaseResponse.status,
+          headers: newHeaders,
+        });
+      }
+    }
+
     return new Response(supabaseResponse.body, {
       status:  supabaseResponse.status,
       headers: supabaseResponse.headers,
