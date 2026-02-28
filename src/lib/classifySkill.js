@@ -5,8 +5,8 @@
 // ─────────────────────────────────────────────
 
 const FALLBACK_REASONS = {
-  Money: 'This skill has strong income potential in professional markets.',
-  Soul: 'This skill nurtures creativity, peace, and personal fulfillment.',
+  Money:     'This skill has strong income potential in professional markets.',
+  Soul:      'This skill nurtures creativity, peace, and personal fulfillment.',
   Curiosity: 'This skill invites exploration and continuous learning.',
 };
 

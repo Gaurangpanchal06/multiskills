@@ -73,4 +73,3 @@ Auth: Email/Password + Google OAuth enabled
 Google OAuth is configured in Supabase. Make sure your Google Cloud Console OAuth app has:
 - Authorized redirect URI: `https://cerlpvxuzyqbbylkrmmr.supabase.co/auth/v1/callback`
 
-"# multiskills" 

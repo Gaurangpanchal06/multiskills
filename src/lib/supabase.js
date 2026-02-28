@@ -1,7 +1,9 @@
 // src/lib/supabase.js
 // ─────────────────────────────────────────────
 // Supabase v2 client for Vite.
-// Reads credentials from .env via import.meta.env
+// In production: routes through Vercel proxy so
+// Jio/BSNL users are never blocked.
+// In development: connects to Supabase directly.
 // ─────────────────────────────────────────────
 
 import { createClient } from '@supabase/supabase-js';
@@ -18,13 +20,18 @@ if (!SUPABASE_URL || !SUPABASE_ANON) {
   );
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
+// In production, route through our Vercel proxy instead of hitting
+// Supabase directly — this bypasses ISP-level blocks (Jio, BSNL, etc.)
+// In development (localhost), hit Supabase directly as usual.
+const isProduction  = import.meta.env.PROD;
+const SUPABASE_CLIENT_URL = isProduction
+  ? `${import.meta.env.VITE_APP_URL}/api/supabase`
+  : SUPABASE_URL;
+
+const supabase = createClient(SUPABASE_CLIENT_URL, SUPABASE_ANON, {
   auth: {
-    // Persist session in localStorage across page reloads
-    persistSession: true,
-    // Automatically refresh the token before it expires
-    autoRefreshToken: true,
-    // Detect the OAuth callback hash/code on page load (needed for Google redirect)
+    persistSession:    true,
+    autoRefreshToken:  true,
     detectSessionInUrl: true,
   },
 });

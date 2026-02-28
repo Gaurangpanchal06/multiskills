@@ -4,20 +4,20 @@ import { useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { useSkills } from './hooks/useSkills';
 
-import Navbar from './components/Navbar';
+import Navbar      from './components/Navbar';
 import WelcomePage from './pages/WelcomePage';
-import AuthPage from './pages/AuthPage';
-import HomePage from './pages/HomePage';
-import { CategoryPage } from './pages/CategoryPage';
+import AuthPage    from './pages/AuthPage';
+import HomePage    from './pages/HomePage';
+import { CategoryPage }    from './pages/CategoryPage';
 import { SkillDetailPage } from './pages/CategoryPage';
 
 export default function App() {
   const { isAuthenticated, loading } = useAuth();
   const { deleteSkill } = useSkills();
 
-  const [screen, setScreen] = useState('welcome');
+  const [screen,   setScreen]   = useState('welcome');
   const [category, setCategory] = useState(null);
-  const [skill, setSkill] = useState(null);
+  const [skill,    setSkill]    = useState(null);
   // Track whether the user was previously authenticated this session.
   // This lets us distinguish "just signed out" from "fresh page load".
   const [wasAuthenticated, setWasAuthenticated] = useState(false);
