@@ -1,75 +1,67 @@
 // api/proxy.js
-// ─────────────────────────────────────────────
-// Vercel serverless function — proxies ALL requests
-// to Supabase so users on Jio/BSNL never connect
-// to supabase.co directly.
-//
-// Route: /api/proxy?path=/auth/v1/signup
-// ─────────────────────────────────────────────
+// Vercel serverless function — proxies all Supabase
+// requests so Jio/BSNL users are never blocked.
 
-export const config = { runtime: 'edge' };
-
-const SUPABASE_URL  = process.env.VITE_SUPABASE_URL;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = process.env.VITE_SUPABASE_ANON_KEY;
 
-export default async function handler(req) {
+module.exports = async function handler(req, res) {
+  // CORS preflight
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,apikey,x-client-info');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
   try {
-    const url = new URL(req.url);
-
-    // The supabase path comes from the URL after /api/proxy
+    // Strip /api/proxy from the path to get the Supabase path
     // e.g. /api/proxy/auth/v1/signup → /auth/v1/signup
-    const supabasePath = url.pathname.replace('/api/proxy', '') || '/';
-    const targetUrl    = `${SUPABASE_URL}${supabasePath}${url.search}`;
+    const supabasePath = req.url.replace('/api/proxy', '') || '/';
+    const targetUrl = `${SUPABASE_URL}${supabasePath}`;
 
-    // Build forwarded headers
-    const headers = new Headers();
-    headers.set('apikey',        SUPABASE_ANON);
-    headers.set('Authorization', req.headers.get('Authorization') || `Bearer ${SUPABASE_ANON}`);
-    headers.set('Content-Type',  req.headers.get('Content-Type')  || 'application/json');
+    // Build headers to forward
+    const headers = {
+      'apikey': SUPABASE_ANON,
+      'Authorization': req.headers['authorization'] || `Bearer ${SUPABASE_ANON}`,
+      'Content-Type': req.headers['content-type'] || 'application/json',
+    };
 
-    // Forward optional Supabase headers if present
-    const optionalHeaders = ['x-client-info', 'x-supabase-api-version', 'prefer'];
-    optionalHeaders.forEach(h => {
-      const val = req.headers.get(h);
-      if (val) headers.set(h, val);
+    // Forward optional Supabase headers
+    ['x-client-info', 'x-supabase-api-version', 'prefer'].forEach(h => {
+      if (req.headers[h]) headers[h] = req.headers[h];
     });
+
+    // Read request body for POST/PATCH/PUT
+    let body = undefined;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      body = await new Promise((resolve) => {
+        let data = '';
+        req.on('data', chunk => data += chunk);
+        req.on('end', () => resolve(data));
+      });
+    }
 
     const supabaseRes = await fetch(targetUrl, {
-      method:   req.method,
-      headers:  headers,
-      body:     req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
-      redirect: 'manual',
+      method: req.method,
+      headers: headers,
+      body: body || undefined,
     });
 
-    // Rewrite any redirect Location headers so they also go through the proxy
-    const resHeaders = new Headers(supabaseRes.headers);
-    const location   = resHeaders.get('location');
-    if (location && location.includes(SUPABASE_URL)) {
-      resHeaders.set(
-        'location',
-        location.replace(SUPABASE_URL, '/api/proxy')
-      );
-    }
-
-    // CORS headers so browser requests work
-    resHeaders.set('Access-Control-Allow-Origin',  '*');
-    resHeaders.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    resHeaders.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,apikey,x-client-info');
-
-    // Handle preflight
-    if (req.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: resHeaders });
-    }
-
-    return new Response(supabaseRes.body, {
-      status:  supabaseRes.status,
-      headers: resHeaders,
+    // Forward status and headers back to client
+    res.status(supabaseRes.status);
+    supabaseRes.headers.forEach((value, key) => {
+      // Skip headers that cause issues when forwarding
+      if (!['transfer-encoding', 'connection'].includes(key.toLowerCase())) {
+        res.setHeader(key, value);
+      }
     });
+
+    const data = await supabaseRes.text();
+    res.send(data);
 
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: 'Proxy error', message: err.message }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    res.status(500).json({ error: 'Proxy error', message: err.message });
   }
-}
+};
