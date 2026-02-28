@@ -1,33 +1,40 @@
 // api/proxy.js
-// Vercel serverless function.
-// Called as: /api/proxy?path=/auth/v1/signup
-// Forwards request to Supabase and returns response.
+// Vercel Node.js serverless function (nodejs20.x)
+// Proxies all Supabase requests to bypass ISP blocks.
+// Usage: /api/proxy?path=/auth/v1/signup
 
 const SUPABASE_URL  = process.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = process.env.VITE_SUPABASE_ANON_KEY;
 
 module.exports = async function handler(req, res) {
-  // CORS
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin',  '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,apikey,x-client-info,x-supabase-api-version,prefer');
 
-  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
 
-  // Get the supabase path from query param
-  // e.g. /api/proxy?path=/auth/v1/signup&redirect_to=...
-  const { path, ...restQuery } = req.query;
+  // Validate env vars
+  if (!SUPABASE_URL || !SUPABASE_ANON) {
+    return res.status(500).json({ error: 'Supabase env vars not set on server' });
+  }
 
+  // Get supabase path from query
+  const path = req.query.path;
   if (!path) {
     return res.status(400).json({ error: 'Missing ?path= parameter' });
   }
 
-  // Rebuild query string from remaining params (e.g. redirect_to)
-  const queryString = new URLSearchParams(restQuery).toString();
+  // Build remaining query params (everything except 'path')
+  const forwardParams = { ...req.query };
+  delete forwardParams.path;
+  const queryString = new URLSearchParams(forwardParams).toString();
   const targetUrl   = `${SUPABASE_URL}${path}${queryString ? '?' + queryString : ''}`;
 
   try {
-    // Build headers
+    // Forward headers
     const headers = {
       'apikey':        SUPABASE_ANON,
       'Authorization': req.headers['authorization'] || `Bearer ${SUPABASE_ANON}`,
@@ -37,32 +44,35 @@ module.exports = async function handler(req, res) {
       if (req.headers[h]) headers[h] = req.headers[h];
     });
 
-    // Read body
+    // Read body for POST/PATCH/PUT
     let body = undefined;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       body = await new Promise(resolve => {
         let d = '';
-        req.on('data', c => d += c);
+        req.on('data', chunk => d += chunk);
         req.on('end',  () => resolve(d));
       });
     }
 
-    const supabaseRes = await fetch(targetUrl, {
+    // Call Supabase
+    const upstream = await fetch(targetUrl, {
       method:  req.method,
       headers: headers,
       body:    body || undefined,
     });
 
     // Forward response headers
-    supabaseRes.headers.forEach((value, key) => {
-      if (!['transfer-encoding', 'connection', 'keep-alive'].includes(key.toLowerCase())) {
-        res.setHeader(key, value);
-      }
+    const skip = new Set(['transfer-encoding', 'connection', 'keep-alive']);
+    upstream.headers.forEach((value, key) => {
+      if (!skip.has(key.toLowerCase())) res.setHeader(key, value);
     });
 
-    res.status(supabaseRes.status).send(await supabaseRes.text());
+    // Send response
+    const text = await upstream.text();
+    res.status(upstream.status).send(text);
 
   } catch (err) {
+    console.error('[proxy] Error:', err);
     res.status(500).json({ error: 'Proxy error', message: err.message });
   }
 };
